@@ -1,21 +1,23 @@
-from .models import RequestLog
-from datetime import datetime
+from django.http import HttpResponseForbidden
+from .models import RequestLog, BlockedIP
 
 class IPLogMiddleware:
-    """Middleware to log IP, timestamp, and path of every request."""
+    """Middleware to log IP and block blacklisted addresses."""
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        # Get client IP
         ip = self.get_client_ip(request)
         path = request.path
 
-        # Log to database
+        # Check if IP is blocked
+        if BlockedIP.objects.filter(ip_address=ip).exists():
+            return HttpResponseForbidden("Your IP is blocked from accessing this site.")
+
+        # Log the request
         RequestLog.objects.create(ip_address=ip, path=path)
 
-        # Continue processing
         response = self.get_response(request)
         return response
 
