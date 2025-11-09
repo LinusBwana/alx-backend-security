@@ -1,13 +1,22 @@
 from django.http import HttpResponseForbidden
 from django.core.cache import cache
-from ip2geotools.databases.noncommercial import DbIpCity
+from geoip2.database import Reader
 from .models import RequestLog, BlockedIP
+import os
+
+# Load the GeoLite2-City database
+GEOIP_DB_PATH = os.path.join(os.path.dirname(__file__), 'GeoLite2-City.mmdb')
 
 class IPLogMiddleware:
     """Middleware to log IPs, block blacklisted IPs, and store geolocation."""
 
     def __init__(self, get_response):
         self.get_response = get_response
+        # Initialize the geoip2 reader once
+        if os.path.exists(GEOIP_DB_PATH):
+            self.geo_reader = Reader(GEOIP_DB_PATH)
+        else:
+            self.geo_reader = None
 
     def __call__(self, request):
         ip = self.get_client_ip(request)
@@ -38,22 +47,22 @@ class IPLogMiddleware:
         return request.META.get('REMOTE_ADDR')
 
     def get_geolocation(self, ip):
-        """Fetch and cache geolocation data for 24 hours."""
+        """Fetch and cache geolocation data for 24 hours using geoip2."""
         cache_key = f"geo_{ip}"
         cached_data = cache.get(cache_key)
         if cached_data:
             return cached_data
 
-        try:
-            # Get data using ip2geotools
-            response = DbIpCity.get(ip, api_key='free')
-            geo_data = {
-                'country': response.country,
-                'city': response.city
-            }
-        except Exception:
-            # Fallback if lookup fails or localhost
-            geo_data = {'country': None, 'city': None}
+        geo_data = {'country': None, 'city': None}
+
+        if self.geo_reader:
+            try:
+                response = self.geo_reader.city(ip)
+                geo_data['country'] = response.country.name
+                geo_data['city'] = response.city.name
+            except Exception:
+                # Localhost or private IPs will fail
+                pass
 
         # Cache for 24 hours (86400 seconds)
         cache.set(cache_key, geo_data, timeout=86400)
